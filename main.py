@@ -516,11 +516,8 @@ async def summarize_video(request: SummaryRequest):
     - 500: 서버 내부 오류
 
     ### 제한 사항
-    - 공개된 YouTube 영상만 처리 가능(비공개 또는 비공개 동영상은 업로드할 수 없음).
-    - API 할당량 제한이 있을 수 있음
-    - 무료 티어의 경우 하루에 8시간 이상의 YouTube 동영상을 업로드할 수 없습니다.
-    - 유료 티어의 경우 동영상 길이에 따른 제한이 없습니다.
-    - 2.5 이전 모델의 경우 요청당 1개의 동영상만 업로드할 수 있습니다. 2.5 이후 모델의 경우 요청당 최대 10개의 동영상을 업로드할 수 있습니다.
+    - 공개된 YouTube 영상만 처리 가능(비공개 또는 비공개 동영상은 처리할 수 없음).
+    - API 할당량 제한이 있을 수 있음(무료는 하루 8시간. 유료는 제한 없음).
     """
     try:
         if not GEMINI_API_KEY:
@@ -539,7 +536,10 @@ async def summarize_video(request: SummaryRequest):
             # Video ID 추출
             video_id = extract_video_id(request.url)
 
-            summary_prompt = request.prompt or "Please summarize the video."
+            summary_prompt = (
+                request.prompt
+                or "이 동영상의 핵심 내용을 중심으로 요약해주세요. 주요 주제, 결론, 그리고 가장 중요한 3-5개의 포인트를 포함하되, 불필요한 세부사항은 생략해주세요."
+            )
 
             # YouTube 영상 분석 요청
             response = client.models.generate_content(
@@ -555,8 +555,6 @@ async def summarize_video(request: SummaryRequest):
                     ]
                 ),
             )
-
-            print(f"요약 생성: {response}")
 
             if not response.text:
                 raise Exception("요약 생성에 실패했습니다")
