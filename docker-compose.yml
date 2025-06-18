@@ -4,6 +4,8 @@ services:
     ports:
       - ${APP_PORT:-8888}:8000
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL_NAME: ${GEMINI_MODEL_NAME:-}
     restart: unless-stopped
     container_name: youtube-transcript-api

@@ -12,7 +12,7 @@ from youtube_transcript_api._api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import JSONFormatter, TextFormatter
 
 # .env 파일 로드
-load_dotenv(override=True)
+load_dotenv()
 
 # Gemini API 초기화
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
