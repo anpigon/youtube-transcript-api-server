@@ -582,6 +582,8 @@ async def summarize_video(request: SummaryRequest):
     except HTTPException:
         raise
     except Exception as e:
+        print(f"영상 요약 중 오류 발생: {str(e)}")
+        # logging.error(f"영상 요약 중 오류 발생: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"영상 요약에 실패했습니다: {str(e)}"
         )
