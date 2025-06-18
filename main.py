@@ -1,17 +1,22 @@
-from fastapi import FastAPI, HTTPException, Query, Path
-from fastapi.responses import RedirectResponse
+import json
+import os
+import re
+from typing import List, Optional
+
+import google.generativeai as genai
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import JSONFormatter, TextFormatter
-import re
-from typing import Optional, List
-import uvicorn
-import os
-import json
-from dotenv import load_dotenv
 
 # .env 파일 로드
 load_dotenv()
+
+# Gemini API 초기화
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(
     title="YouTube Transcript API",
@@ -47,92 +52,132 @@ app = FastAPI(
     },
 )
 
+
 class TranscriptRequest(BaseModel):
     url_or_id: str = Field(
         ...,
         title="YouTube URL 또는 Video ID",
         description="YouTube 동영상 URL 또는 Video ID",
-        example="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        example="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     )
     languages: Optional[List[str]] = Field(
         default=["ko", "en"],
         title="언어 코드 목록",
         description="우선순위에 따른 언어 코드 목록 (ISO 639-1)",
-        example=["ko", "en", "ja"]
+        example=["ko", "en", "ja"],
     )
     format: Optional[str] = Field(
         default="json",
         title="출력 형식",
         description="자막 출력 형식",
         pattern="^(json|text)$",
-        example="json"
+        example="json",
     )
     preserve_formatting: Optional[bool] = Field(
         default=False,
         title="포맷팅 보존",
         description="HTML 포맷팅 요소 보존 여부 (예: <i>, <b>)",
-        example=False
+        example=False,
     )
+
 
 class TranscriptResponse(BaseModel):
     video_id: str = Field(
-        ...,
-        title="Video ID",
-        description="YouTube 동영상 ID",
-        example="dQw4w9WgXcQ"
+        ..., title="Video ID", description="YouTube 동영상 ID", example="dQw4w9WgXcQ"
     )
     language: str = Field(
-        ...,
-        title="언어명",
-        description="자막의 언어명",
-        example="Korean"
+        ..., title="언어명", description="자막의 언어명", example="Korean"
     )
     language_code: str = Field(
-        ...,
-        title="언어 코드",
-        description="자막의 언어 코드 (ISO 639-1)",
-        example="ko"
+        ..., title="언어 코드", description="자막의 언어 코드 (ISO 639-1)", example="ko"
     )
     is_generated: bool = Field(
         ...,
         title="자동 생성 여부",
         description="자막이 자동 생성되었는지 여부",
-        example=False
+        example=False,
     )
     transcript: str | list = Field(
         ...,
         title="자막 내용",
         description="추출된 자막 내용 (JSON 또는 텍스트 형식)",
-        example='[{"text": "안녕하세요", "start": 0.0, "duration": 2.5}]'
+        example='[{"text": "안녕하세요", "start": 0.0, "duration": 2.5}]',
     )
+
 
 class TranscriptInfo(BaseModel):
     language: str = Field(..., title="언어명", example="Korean")
     language_code: str = Field(..., title="언어 코드", example="ko")
     is_generated: bool = Field(..., title="자동 생성 여부", example=False)
     is_translatable: bool = Field(..., title="번역 가능 여부", example=True)
-    translation_languages: List[str] = Field(..., title="번역 가능 언어 목록", example=["en", "ja"])
+    translation_languages: List[str] = Field(
+        ..., title="번역 가능 언어 목록", example=["en", "ja"]
+    )
+
 
 class TranscriptListResponse(BaseModel):
     video_id: str = Field(..., title="Video ID", example="dQw4w9WgXcQ")
-    available_transcripts: List[TranscriptInfo] = Field(..., title="사용 가능한 자막 목록")
+    available_transcripts: List[TranscriptInfo] = Field(
+        ..., title="사용 가능한 자막 목록"
+    )
+
+
+class SummaryRequest(TranscriptRequest):
+    """영상 요약 요청 모델"""
+
+    prompt: Optional[str] = Field(
+        default="이 동영상의 주요 내용을 한국어로 요약해주세요",
+        title="요약 프롬프트",
+        description="요약 생성을 위한 지시 프롬프트",
+        example="이 동영상의 주요 내용을 5줄로 요약해주세요",
+    )
+    model: Optional[str] = Field(
+        default="gemini-2.5-flash",
+        title="Gemini 모델",
+        description="사용할 Gemini 모델 (gemini-2.5-flash 또는 gemini-2.5-pro)",
+        pattern="^(gemini-2\.5-flash|gemini-2\.5-pro)$",
+        example="gemini-2.5-flash",
+    )
+
+
+class SummaryResponse(TranscriptResponse):
+    """영상 요약 응답 모델"""
+
+    summary: str = Field(
+        ...,
+        title="요약 내용",
+        description="Gemini가 생성한 영상 요약 내용",
+        example="이 영상은 인공지능의 발전 과정에 대해 설명합니다...",
+    )
+    model: str = Field(
+        ...,
+        title="사용된 모델",
+        description="요약 생성에 사용된 Gemini 모델",
+        example="gemini-2.5-flash",
+    )
+
 
 class ErrorResponse(BaseModel):
-    detail: str = Field(..., title="오류 메시지", example="자막을 가져오는데 실패했습니다")
+    detail: str = Field(
+        ..., title="오류 메시지", example="자막을 가져오는데 실패했습니다"
+    )
+
 
 class HealthResponse(BaseModel):
     status: str = Field(..., title="상태", example="healthy")
+
 
 class RootResponse(BaseModel):
     message: str = Field(..., title="메시지", example="YouTube Transcript API Server")
     version: str = Field(..., title="버전", example="1.0.0")
 
+
 def extract_video_id(url_or_id: str) -> str:
     """YouTube URL에서 video ID를 추출하거나 ID 그대로 반환"""
     # YouTube URL 패턴들
     patterns = [
-        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)',
-        r'youtube\.com\/watch\?.*v=([^&\n?#]+)',
+        r"(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)",
+        r"youtube\.com\/watch\?.*v=([^&\n?#]+)",
     ]
 
     for pattern in patterns:
@@ -143,6 +188,7 @@ def extract_video_id(url_or_id: str) -> str:
     # URL이 아닌 경우 그대로 video ID로 간주
     return url_or_id
 
+
 @app.get("/", response_model=RootResponse, tags=["기본"])
 async def root():
     """
@@ -151,6 +197,7 @@ async def root():
     API 서버의 기본 정보를 반환합니다.
     """
     return {"message": "YouTube Transcript API Server", "version": "1.0.0"}
+
 
 @app.get("/health", response_model=HealthResponse, tags=["기본"])
 async def health_check():
@@ -161,15 +208,18 @@ async def health_check():
     """
     return {"status": "healthy"}
 
-@app.post("/transcript",
-          response_model=TranscriptResponse,
-          responses={
-              400: {"model": ErrorResponse, "description": "잘못된 요청"},
-              404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
-              500: {"model": ErrorResponse, "description": "서버 오류"}
-          },
-          tags=["자막 추출"],
-          summary="자막 추출 (POST)")
+
+@app.post(
+    "/transcript",
+    response_model=TranscriptResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
+        404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
+        500: {"model": ErrorResponse, "description": "서버 오류"},
+    },
+    tags=["자막 추출"],
+    summary="자막 추출 (POST)",
+)
 async def get_transcript(request: TranscriptRequest):
     """
     ## YouTube 동영상 자막 추출
@@ -221,7 +271,7 @@ async def get_transcript(request: TranscriptRequest):
         fetched_transcript = ytt_api.fetch(
             video_id,
             languages=request.languages,
-            preserve_formatting=request.preserve_formatting
+            preserve_formatting=request.preserve_formatting,
         )
 
         # 포맷에 따라 자막 변환
@@ -238,26 +288,49 @@ async def get_transcript(request: TranscriptRequest):
             language=fetched_transcript.language,
             language_code=fetched_transcript.language_code,
             is_generated=fetched_transcript.is_generated,
-            transcript=transcript_text
+            transcript=transcript_text,
         )
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"자막을 가져오는데 실패했습니다: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"자막을 가져오는데 실패했습니다: {str(e)}"
+        )
 
-@app.get("/transcript/{video_id}",
-         response_model=TranscriptResponse,
-         responses={
-             400: {"model": ErrorResponse, "description": "잘못된 요청"},
-             404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
-             500: {"model": ErrorResponse, "description": "서버 오류"}
-         },
-         tags=["자막 추출"],
-         summary="자막 추출 (GET)")
+
+@app.get(
+    "/transcript/{video_id}",
+    response_model=TranscriptResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
+        404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
+        500: {"model": ErrorResponse, "description": "서버 오류"},
+    },
+    tags=["자막 추출"],
+    summary="자막 추출 (GET)",
+)
 async def get_transcript_by_id(
-    video_id: str = Path(..., title="Video ID", description="YouTube 동영상 ID", examples=["dQw4w9WgXcQ"]),
-    languages: str = Query("ko,en", title="언어 코드", description="쉼표로 구분된 언어 코드 목록", examples=["ko,en"]),
-    format: str = Query("json", title="출력 형식", description="자막 출력 형식 (json 또는 text)", pattern="^(json|text)$", examples=["json"]),
-    preserve_formatting: bool = Query(False, title="포맷팅 보존", description="HTML 포맷팅 요소 보존 여부", examples=[False])
+    video_id: str = Path(
+        ..., title="Video ID", description="YouTube 동영상 ID", examples=["dQw4w9WgXcQ"]
+    ),
+    languages: str = Query(
+        "ko,en",
+        title="언어 코드",
+        description="쉼표로 구분된 언어 코드 목록",
+        examples=["ko,en"],
+    ),
+    format: str = Query(
+        "json",
+        title="출력 형식",
+        description="자막 출력 형식 (json 또는 text)",
+        pattern="^(json|text)$",
+        examples=["json"],
+    ),
+    preserve_formatting: bool = Query(
+        False,
+        title="포맷팅 보존",
+        description="HTML 포맷팅 요소 보존 여부",
+        examples=[False],
+    ),
 ):
     """
     ## YouTube 동영상 자막 추출 (GET 방식)
@@ -281,22 +354,27 @@ async def get_transcript_by_id(
         url_or_id=video_id,
         languages=language_list,
         format=format,
-        preserve_formatting=preserve_formatting
+        preserve_formatting=preserve_formatting,
     )
 
     return await get_transcript(request)
 
-@app.get("/list/{video_id}",
-         response_model=TranscriptListResponse,
-         responses={
-             400: {"model": ErrorResponse, "description": "잘못된 요청"},
-             404: {"model": ErrorResponse, "description": "동영상을 찾을 수 없음"},
-             500: {"model": ErrorResponse, "description": "서버 오류"}
-         },
-         tags=["자막 정보"],
-         summary="사용 가능한 자막 목록 조회")
+
+@app.get(
+    "/list/{video_id}",
+    response_model=TranscriptListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
+        404: {"model": ErrorResponse, "description": "동영상을 찾을 수 없음"},
+        500: {"model": ErrorResponse, "description": "서버 오류"},
+    },
+    tags=["자막 정보"],
+    summary="사용 가능한 자막 목록 조회",
+)
 async def list_available_transcripts(
-    video_id: str = Path(..., title="Video ID", description="YouTube 동영상 ID", example="dQw4w9WgXcQ")
+    video_id: str = Path(
+        ..., title="Video ID", description="YouTube 동영상 ID", example="dQw4w9WgXcQ"
+    ),
 ):
     """
     ## 사용 가능한 자막 목록 조회
@@ -345,18 +423,113 @@ async def list_available_transcripts(
 
         transcripts = []
         for transcript in transcript_list:
-            transcripts.append({
-                "language": transcript.language,
-                "language_code": transcript.language_code,
-                "is_generated": transcript.is_generated,
-                "is_translatable": transcript.is_translatable,
-                "translation_languages": transcript.translation_languages
-            })
+            transcripts.append(
+                {
+                    "language": transcript.language,
+                    "language_code": transcript.language_code,
+                    "is_generated": transcript.is_generated,
+                    "is_translatable": transcript.is_translatable,
+                    "translation_languages": transcript.translation_languages,
+                }
+            )
 
-        return {
-            "video_id": video_id,
-            "available_transcripts": transcripts
-        }
+        return {"video_id": video_id, "available_transcripts": transcripts}
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"자막 목록을 가져오는데 실패했습니다: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"자막 목록을 가져오는데 실패했습니다: {str(e)}"
+        )
+
+
+@app.post(
+    "/summarize",
+    response_model=SummaryResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
+        404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
+        500: {"model": ErrorResponse, "description": "서버 오류"},
+    },
+    tags=["영상 요약"],
+    summary="영상 내용 요약",
+)
+async def summarize_video(request: SummaryRequest):
+    """
+    ## YouTube 동영상 내용 요약
+
+    YouTube URL 또는 Video ID를 사용하여 동영상의 내용을 요약합니다.
+
+    ### 요청 예시
+    ```json
+    {
+        "url_or_id": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "languages": ["ko", "en"],
+        "prompt": "이 동영상의 주요 내용을 5줄로 요약해주세요",
+        "model": "gemini-2.5-flash"
+    }
+    ```
+
+    ### 응답 예시
+    ```json
+    {
+        "video_id": "dQw4w9WgXcQ",
+        "language": "Korean",
+        "language_code": "ko",
+        "is_generated": false,
+        "transcript": "[...]",
+        "summary": "이 영상은 인공지능의 발전 과정에 대해 설명합니다...",
+        "model": "gemini-2.5-flash"
+    }
+    ```
+
+    ### 지원 모델
+    - `gemini-2.5-flash`: 빠르고 비용 효율적인 모델 (기본값)
+    - `gemini-2.5-pro`: 고성능 모델
+
+    ### 에러 처리
+    - 400: 잘못된 요청 (유효하지 않은 URL, 모델명 등)
+    - 404: 자막을 찾을 수 없음
+    - 500: 서버 내부 오류
+    """
+    try:
+        if not GEMINI_API_KEY:
+            raise HTTPException(
+                status_code=500, detail="Gemini API 키가 설정되지 않았습니다"
+            )
+
+        # 자막 추출
+        transcript_request = TranscriptRequest(
+            url_or_id=request.url_or_id,
+            languages=request.languages,
+            format="text",
+            preserve_formatting=request.preserve_formatting,
+        )
+        transcript_response = await get_transcript(transcript_request)
+
+        # Gemini 모델 초기화
+        model = genai.GenerativeModel(request.model)
+
+        # 프롬프트 구성
+        prompt = f"{request.prompt}:\n\n{transcript_response.transcript}"
+
+        # 요약 생성
+        response = model.generate_content(prompt)
+        if not response.text:
+            raise Exception("요약 생성에 실패했습니다")
+
+        # 응답 구성
+        return SummaryResponse(
+            video_id=transcript_response.video_id,
+            language=transcript_response.language,
+            language_code=transcript_response.language_code,
+            is_generated=transcript_response.is_generated,
+            transcript=transcript_response.transcript,
+            summary=response.text,
+            model=request.model,
+        )
+
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=500, detail=f"영상 요약에 실패했습니다: {str(e)}"
+        )
