@@ -3,11 +3,11 @@ import os
 import re
 from typing import List, Optional
 
-import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Path, Query
+from google import genai
 from pydantic import BaseModel, Field
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import JSONFormatter, TextFormatter
 
 # .env 파일 로드
@@ -15,8 +15,6 @@ load_dotenv()
 
 # Gemini API 초기화
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(
     title="YouTube Transcript API",
@@ -125,9 +123,15 @@ class TranscriptListResponse(BaseModel):
     )
 
 
-class SummaryRequest(TranscriptRequest):
+class SummaryRequest(BaseModel):
     """영상 요약 요청 모델"""
 
+    url: str = Field(
+        ...,
+        title="YouTube URL",
+        description="YouTube 동영상 URL",
+        examples=["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+    )
     prompt: Optional[str] = Field(
         default="이 동영상의 주요 내용을 한국어로 요약해주세요",
         title="요약 프롬프트",
@@ -138,14 +142,16 @@ class SummaryRequest(TranscriptRequest):
         default="gemini-2.5-flash",
         title="Gemini 모델",
         description="사용할 Gemini 모델 (gemini-2.5-flash 또는 gemini-2.5-pro)",
-        pattern="^(gemini-2\.5-flash|gemini-2\.5-pro)$",
         examples=["gemini-2.5-flash"],
     )
 
 
-class SummaryResponse(TranscriptResponse):
+class SummaryResponse(BaseModel):
     """영상 요약 응답 모델"""
 
+    video_id: str = Field(
+        ..., title="Video ID", description="YouTube 동영상 ID", examples=["dQw4w9WgXcQ"]
+    )
     summary: str = Field(
         ...,
         title="요약 내용",
@@ -153,10 +159,15 @@ class SummaryResponse(TranscriptResponse):
         examples=["이 영상은 인공지능의 발전 과정에 대해 설명합니다..."],
     )
     model: str = Field(
-        ...,
+        default="gemini-2.5-flash",
         title="사용된 모델",
         description="요약 생성에 사용된 Gemini 모델",
         examples=["gemini-2.5-flash"],
+    )
+    video_analysis: dict = Field(
+        ...,
+        title="영상 분석 메타데이터",
+        description="Gemini의 영상 분석 결과 메타데이터",
     )
 
 
@@ -273,10 +284,17 @@ async def get_transcript(request: TranscriptRequest):
         ytt_api = YouTubeTranscriptApi()
 
         # 자막 가져오기
+        languages = request.languages if request.languages is not None else ["ko", "en"]
+        preserve_formatting = (
+            request.preserve_formatting
+            if request.preserve_formatting is not None
+            else False
+        )
+
         fetched_transcript = ytt_api.fetch(
             video_id,
-            languages=request.languages,
-            preserve_formatting=request.preserve_formatting,
+            languages=languages,
+            preserve_formatting=preserve_formatting,
         )
 
         # 포맷에 따라 자막 변환
@@ -451,7 +469,8 @@ async def list_available_transcripts(
     response_model=SummaryResponse,
     responses={
         400: {"model": ErrorResponse, "description": "잘못된 요청"},
-        404: {"model": ErrorResponse, "description": "자막을 찾을 수 없음"},
+        403: {"model": ErrorResponse, "description": "비공개 영상"},
+        429: {"model": ErrorResponse, "description": "할당량 초과"},
         500: {"model": ErrorResponse, "description": "서버 오류"},
     },
     tags=["영상 요약"],
@@ -459,17 +478,16 @@ async def list_available_transcripts(
 )
 async def summarize_video(request: SummaryRequest):
     """
-    ## YouTube 동영상 내용 요약
+    ## YouTube 동영상 내용 요약 (Gemini Vision)
 
-    YouTube URL 또는 Video ID를 사용하여 동영상의 내용을 요약합니다.
+    YouTube URL을 Gemini의 영상 분석 기능에 직접 전달하여 내용을 요약합니다.
 
     ### 요청 예시
     ```json
     {
-        "url_or_id": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "languages": ["ko", "en"],
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "prompt": "이 동영상의 주요 내용을 5줄로 요약해주세요",
-        "model": "gemini-2.5-flash"
+        "model": "gemini-2.5-flash",
     }
     ```
 
@@ -477,12 +495,12 @@ async def summarize_video(request: SummaryRequest):
     ```json
     {
         "video_id": "dQw4w9WgXcQ",
-        "language": "Korean",
-        "language_code": "ko",
-        "is_generated": false,
-        "transcript": "[...]",
         "summary": "이 영상은 인공지능의 발전 과정에 대해 설명합니다...",
-        "model": "gemini-2.5-flash"
+        "model": "gemini-2.5-flash",
+        "video_analysis": {
+            "source": "youtube_url",
+            "model": "gemini-2.5-flash"
+        }
     }
     ```
 
@@ -492,8 +510,13 @@ async def summarize_video(request: SummaryRequest):
 
     ### 에러 처리
     - 400: 잘못된 요청 (유효하지 않은 URL, 모델명 등)
-    - 404: 자막을 찾을 수 없음
+    - 403: 비공개 영상은 처리 불가
+    - 429: 일일 할당량 초과
     - 500: 서버 내부 오류
+
+    ### 제한 사항
+    - 공개된 YouTube 영상만 처리 가능
+    - API 할당량 제한이 있을 수 있음
     """
     try:
         if not GEMINI_API_KEY:
@@ -501,42 +524,64 @@ async def summarize_video(request: SummaryRequest):
                 status_code=500, detail="Gemini API 키가 설정되지 않았습니다"
             )
 
-        # 자막 추출
-        transcript_request = TranscriptRequest(
-            url_or_id=request.url_or_id,
-            languages=request.languages,
-            format="text",
-            preserve_formatting=request.preserve_formatting,
-        )
-        transcript_response = await get_transcript(transcript_request)
+        try:
+            # Gemini 요청 구성
+            model_name = request.model or os.getenv(
+                "GEMINI_MODEL_NAME", "gemini-2.5-flash"
+            )
+            # Gemini 모델 초기화
+            client = genai.Client(api_key=GEMINI_API_KEY)
 
-        # Gemini 모델 초기화
-        if not request.model:
-            raise HTTPException(status_code=400, detail="모델이 지정되지 않았습니다")
-        model = genai.GenerativeModel(request.model)
+            # Video ID 추출
+            video_id = extract_video_id(request.url)
 
-        # 프롬프트 구성
-        prompt = f"{request.prompt}:\n\n{transcript_response.transcript}"
+            # YouTube 영상 분석 요청
+            response = client.generate_content(
+                model=f"models/${model_name}",
+                contents=types.Content(
+                    parts=[
+                        types.Part(
+                            file_data=types.FileData(
+                                file_uri=f"https://www.youtube.com/watch?v={video_id}"
+                            )
+                        ),
+                        types.Part(
+                            text=request.prompt or "Please summarize the video."
+                        ),
+                    ]
+                ),
+            )
 
-        # 요약 생성
-        response = model.generate_content(prompt)
-        if not response.text:
-            raise Exception("요약 생성에 실패했습니다")
+            print(f"요약 생성: {response}")
 
-        # 응답 구성
-        return SummaryResponse(
-            video_id=transcript_response.video_id,
-            language=transcript_response.language,
-            language_code=transcript_response.language_code,
-            is_generated=transcript_response.is_generated,
-            transcript=transcript_response.transcript,
-            summary=response.text,
-            model=request.model,
-        )
+            if not response.text:
+                raise Exception("요약 생성에 실패했습니다")
 
+            # 응답 구성
+            return SummaryResponse(
+                video_id=video_id,
+                summary=response.text,
+                model=model_name,
+                video_analysis={"source": "youtube_url", "model": model_name},
+            )
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "quota" in error_msg or "limit" in error_msg:
+                raise HTTPException(
+                    status_code=429,
+                    detail="일일 할당량이 초과되었습니다. 내일 다시 시도해주세요.",
+                )
+            if "private" in error_msg or "restricted" in error_msg:
+                raise HTTPException(
+                    status_code=403,
+                    detail="비공개 또는 제한된 영상은 처리할 수 없습니다.",
+                )
+            raise
+
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(
             status_code=500, detail=f"영상 요약에 실패했습니다: {str(e)}"
         )
