@@ -58,65 +58,68 @@ class TranscriptRequest(BaseModel):
         ...,
         title="YouTube URL 또는 Video ID",
         description="YouTube 동영상 URL 또는 Video ID",
-        example="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        examples=["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
     )
     languages: Optional[List[str]] = Field(
         default=["ko", "en"],
         title="언어 코드 목록",
         description="우선순위에 따른 언어 코드 목록 (ISO 639-1)",
-        example=["ko", "en", "ja"],
+        examples=[["ko", "en", "ja"]],
     )
     format: Optional[str] = Field(
         default="json",
         title="출력 형식",
         description="자막 출력 형식",
         pattern="^(json|text)$",
-        example="json",
+        examples=["json"],
     )
     preserve_formatting: Optional[bool] = Field(
         default=False,
         title="포맷팅 보존",
         description="HTML 포맷팅 요소 보존 여부 (예: <i>, <b>)",
-        example=False,
+        examples=[False],
     )
 
 
 class TranscriptResponse(BaseModel):
     video_id: str = Field(
-        ..., title="Video ID", description="YouTube 동영상 ID", example="dQw4w9WgXcQ"
+        ..., title="Video ID", description="YouTube 동영상 ID", examples=["dQw4w9WgXcQ"]
     )
     language: str = Field(
-        ..., title="언어명", description="자막의 언어명", example="Korean"
+        ..., title="언어명", description="자막의 언어명", examples=["Korean"]
     )
     language_code: str = Field(
-        ..., title="언어 코드", description="자막의 언어 코드 (ISO 639-1)", example="ko"
+        ...,
+        title="언어 코드",
+        description="자막의 언어 코드 (ISO 639-1)",
+        examples=["ko"],
     )
     is_generated: bool = Field(
         ...,
         title="자동 생성 여부",
         description="자막이 자동 생성되었는지 여부",
-        example=False,
+        examples=[False],
     )
     transcript: str | list = Field(
         ...,
         title="자막 내용",
         description="추출된 자막 내용 (JSON 또는 텍스트 형식)",
-        example='[{"text": "안녕하세요", "start": 0.0, "duration": 2.5}]',
+        examples=['[{"text": "안녕하세요", "start": 0.0, "duration": 2.5}]'],
     )
 
 
 class TranscriptInfo(BaseModel):
-    language: str = Field(..., title="언어명", example="Korean")
-    language_code: str = Field(..., title="언어 코드", example="ko")
-    is_generated: bool = Field(..., title="자동 생성 여부", example=False)
-    is_translatable: bool = Field(..., title="번역 가능 여부", example=True)
+    language: str = Field(..., title="언어명", examples=["Korean"])
+    language_code: str = Field(..., title="언어 코드", examples=["ko"])
+    is_generated: bool = Field(..., title="자동 생성 여부", examples=[False])
+    is_translatable: bool = Field(..., title="번역 가능 여부", examples=[True])
     translation_languages: List[str] = Field(
-        ..., title="번역 가능 언어 목록", example=["en", "ja"]
+        ..., title="번역 가능 언어 목록", examples=[["en", "ja"]]
     )
 
 
 class TranscriptListResponse(BaseModel):
-    video_id: str = Field(..., title="Video ID", example="dQw4w9WgXcQ")
+    video_id: str = Field(..., title="Video ID", examples=["dQw4w9WgXcQ"])
     available_transcripts: List[TranscriptInfo] = Field(
         ..., title="사용 가능한 자막 목록"
     )
@@ -129,14 +132,14 @@ class SummaryRequest(TranscriptRequest):
         default="이 동영상의 주요 내용을 한국어로 요약해주세요",
         title="요약 프롬프트",
         description="요약 생성을 위한 지시 프롬프트",
-        example="이 동영상의 주요 내용을 5줄로 요약해주세요",
+        examples=["이 동영상의 주요 내용을 5줄로 요약해주세요"],
     )
     model: Optional[str] = Field(
         default="gemini-2.5-flash",
         title="Gemini 모델",
         description="사용할 Gemini 모델 (gemini-2.5-flash 또는 gemini-2.5-pro)",
         pattern="^(gemini-2\.5-flash|gemini-2\.5-pro)$",
-        example="gemini-2.5-flash",
+        examples=["gemini-2.5-flash"],
     )
 
 
@@ -147,29 +150,31 @@ class SummaryResponse(TranscriptResponse):
         ...,
         title="요약 내용",
         description="Gemini가 생성한 영상 요약 내용",
-        example="이 영상은 인공지능의 발전 과정에 대해 설명합니다...",
+        examples=["이 영상은 인공지능의 발전 과정에 대해 설명합니다..."],
     )
     model: str = Field(
         ...,
         title="사용된 모델",
         description="요약 생성에 사용된 Gemini 모델",
-        example="gemini-2.5-flash",
+        examples=["gemini-2.5-flash"],
     )
 
 
 class ErrorResponse(BaseModel):
     detail: str = Field(
-        ..., title="오류 메시지", example="자막을 가져오는데 실패했습니다"
+        ..., title="오류 메시지", examples=["자막을 가져오는데 실패했습니다"]
     )
 
 
 class HealthResponse(BaseModel):
-    status: str = Field(..., title="상태", example="healthy")
+    status: str = Field(..., title="상태", examples=["healthy"])
 
 
 class RootResponse(BaseModel):
-    message: str = Field(..., title="메시지", example="YouTube Transcript API Server")
-    version: str = Field(..., title="버전", example="1.0.0")
+    message: str = Field(
+        ..., title="메시지", examples=["YouTube Transcript API Server"]
+    )
+    version: str = Field(..., title="버전", examples=["1.0.0"])
 
 
 def extract_video_id(url_or_id: str) -> str:
@@ -373,7 +378,7 @@ async def get_transcript_by_id(
 )
 async def list_available_transcripts(
     video_id: str = Path(
-        ..., title="Video ID", description="YouTube 동영상 ID", example="dQw4w9WgXcQ"
+        ..., title="Video ID", description="YouTube 동영상 ID", examples=["dQw4w9WgXcQ"]
     ),
 ):
     """
@@ -506,6 +511,8 @@ async def summarize_video(request: SummaryRequest):
         transcript_response = await get_transcript(transcript_request)
 
         # Gemini 모델 초기화
+        if not request.model:
+            raise HTTPException(status_code=400, detail="모델이 지정되지 않았습니다")
         model = genai.GenerativeModel(request.model)
 
         # 프롬프트 구성
