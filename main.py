@@ -6,12 +6,13 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Path, Query
 from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 from youtube_transcript_api._api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import JSONFormatter, TextFormatter
 
 # .env 파일 로드
-load_dotenv()
+load_dotenv(override=True)
 
 # Gemini API 초기화
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -515,8 +516,11 @@ async def summarize_video(request: SummaryRequest):
     - 500: 서버 내부 오류
 
     ### 제한 사항
-    - 공개된 YouTube 영상만 처리 가능
+    - 공개된 YouTube 영상만 처리 가능(비공개 또는 비공개 동영상은 업로드할 수 없음).
     - API 할당량 제한이 있을 수 있음
+    - 무료 티어의 경우 하루에 8시간 이상의 YouTube 동영상을 업로드할 수 없습니다.
+    - 유료 티어의 경우 동영상 길이에 따른 제한이 없습니다.
+    - 2.5 이전 모델의 경우 요청당 1개의 동영상만 업로드할 수 있습니다. 2.5 이후 모델의 경우 요청당 최대 10개의 동영상을 업로드할 수 있습니다.
     """
     try:
         if not GEMINI_API_KEY:
@@ -535,19 +539,19 @@ async def summarize_video(request: SummaryRequest):
             # Video ID 추출
             video_id = extract_video_id(request.url)
 
+            summary_prompt = request.prompt or "Please summarize the video."
+
             # YouTube 영상 분석 요청
-            response = client.generate_content(
-                model=f"models/${model_name}",
+            response = client.models.generate_content(
+                model=model_name,
                 contents=types.Content(
                     parts=[
                         types.Part(
                             file_data=types.FileData(
-                                file_uri=f"https://www.youtube.com/watch?v={video_id}"
+                                file_uri=f"https://www.youtube.com/watch?v={video_id}",
                             )
                         ),
-                        types.Part(
-                            text=request.prompt or "Please summarize the video."
-                        ),
+                        types.Part(text=summary_prompt),
                     ]
                 ),
             )
